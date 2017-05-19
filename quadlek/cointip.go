@@ -14,6 +14,7 @@ import (
 )
 
 var coinbaseClient *cointip.ApiKeyClient
+var bankAccount *cointip.Account
 var accountsCache []*cointip.Account
 var accountsCacheLock = &sync.Mutex{}
 
@@ -53,6 +54,15 @@ func getOrCreateAccount(userId string, refresh bool) (*cointip.Account, error) {
 	accountsCacheLock.Lock()
 	defer accountsCacheLock.Unlock()
 
+	// Warm the cache
+	if len(accountsCache) == 0 {
+		accts, err := coinbaseClient.ListAccounts()
+		if err != nil {
+			return nil, err
+		}
+		accountsCache = accts
+	}
+
 	for i, account := range accountsCache {
 		// If we find an account in the cache, we optionally refresh it and return it
 		if account.ID == acctId {
@@ -68,12 +78,21 @@ func getOrCreateAccount(userId string, refresh bool) (*cointip.Account, error) {
 	}
 
 	// Otherwise, create and cache it
-	// TODO: Prime new accounts
 	account, err := coinbaseClient.CreateAccount(acctId)
 	if err != nil {
 		return nil, err
 	}
 	accountsCache = append(accountsCache, account)
+	log.Infof("Created new cointip account: %s", acctId)
+
+	tx, err := coinbaseClient.Transfer(bankAccount.ID, account.ID, &cointip.Balance{Currency: cointip.CurrencyUSD, Amount: 3.00})
+	if err != nil {
+		log.WithError(err).Errorf("Failed to prime new cointip account from bank: %s", bankAccount.ID)
+		// non-fatal, so we still return the account
+	} else {
+		log.Infof("Primed new cointip account %s txid: %s", acctId, tx.ID)
+	}
+
 	return account, nil
 }
 
@@ -173,17 +192,19 @@ func cointipCommand(ctx context.Context, cmdChannel <-chan *quadlek.CommandMsg) 
 	}
 }
 
-func Register(apiKey, apiSecret string) quadlek.Plugin {
-	coinbaseClient, err := cointip.APIKeyClient(apiKey, apiSecret)
+func Register(apiKey, apiSecret, bankAccountId string) quadlek.Plugin {
+	client, err := cointip.APIKeyClient(apiKey, apiSecret)
 	if err != nil {
 		return nil
 	}
-	// Warm the cache
-	accounts, err := coinbaseClient.ListAccounts()
+	coinbaseClient = client
+
+	// Warm the cache and fetch the bank account
+	account, err := getOrCreateAccount(bankAccountId, true)
 	if err != nil {
 		return nil
 	}
-	accountsCache = accounts
+	bankAccount = account
 
 	return quadlek.MakePlugin(
 		"cointip",
