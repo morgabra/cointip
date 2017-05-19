@@ -99,12 +99,16 @@ func cointipReaction(ctx context.Context, reactionChannel <-chan *quadlek.Reacti
 			switch rh.Reaction.Reaction {
 			case ":cointip_1:":
 				amount.Amount = .01
+			case ":cointip_2:":
+				amount.Amount = .02
 			case ":cointip_5:":
 				amount.Amount = .05
 			case ":cointip_10:":
 				amount.Amount = .10
 			case ":cointip_25:":
 				amount.Amount = .25
+			default:
+				return
 			}
 
 			tx, err := coinbaseClient.Transfer(from.ID, to.ID, amount)
