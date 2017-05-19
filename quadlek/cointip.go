@@ -101,17 +101,6 @@ func cointipReaction(ctx context.Context, reactionChannel <-chan *quadlek.Reacti
 		select {
 		case rh := <-reactionChannel:
 
-			from, err := getOrCreateAccount(rh.Reaction.User, false)
-			if err != nil {
-				log.WithError(err).Error("Failed fetching coinbase account.")
-				return
-			}
-			to, err := getOrCreateAccount(rh.Reaction.ItemUser, false)
-			if err != nil {
-				log.WithError(err).Error("Failed fetching coinbase account.")
-				return
-			}
-
 			amount := &cointip.Balance{
 				Currency: cointip.CurrencyUSD,
 			}
@@ -127,6 +116,17 @@ func cointipReaction(ctx context.Context, reactionChannel <-chan *quadlek.Reacti
 			case ":cointip_25:":
 				amount.Amount = .25
 			default:
+				return
+			}
+
+			from, err := getOrCreateAccount(rh.Reaction.User, false)
+			if err != nil {
+				log.WithError(err).Error("Failed fetching coinbase account.")
+				return
+			}
+			to, err := getOrCreateAccount(rh.Reaction.ItemUser, false)
+			if err != nil {
+				log.WithError(err).Error("Failed fetching coinbase account.")
 				return
 			}
 
