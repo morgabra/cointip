@@ -47,53 +47,63 @@ func accountBalanceString(account *cointip.Account) string {
 	)
 }
 
-func getOrCreateAccount(userId string, refresh bool) (*cointip.Account, error) {
-
-	acctId := fmt.Sprintf("cointip_%s", userId)
+func getOrCreateAccount(userId string) (*cointip.Account, error) {
+	log.Infof("cointip: get or create account %s", userId)
+	acctName := fmt.Sprintf("cointip_%s", userId)
 
 	accountsCacheLock.Lock()
 	defer accountsCacheLock.Unlock()
 
 	// Warm the cache
 	if len(accountsCache) == 0 {
+		log.Info("cointip: listing accounts")
 		accts, err := coinbaseClient.ListAccounts()
 		if err != nil {
 			return nil, err
 		}
 		accountsCache = accts
+		log.Infof("cointip: found %d accounts", len(accountsCache))
 	}
 
 	for i, account := range accountsCache {
 		// If we find an account in the cache, we optionally refresh it and return it
-		if account.ID == acctId {
-			if refresh {
-				account, err := coinbaseClient.GetAccount(account.ID)
-				if err != nil {
-					return nil, err
-				}
-				accountsCache[i] = account
+		if account.Name == acctName {
+			log.Infof("cointip: refreshing account %s (%s)", account.Name, account.ID)
+			account, err := coinbaseClient.GetAccount(account.ID)
+			if err != nil {
+				return nil, err
 			}
+			accountsCache[i] = account
 			return account, nil
 		}
 	}
 
 	// Otherwise, create and cache it
-	account, err := coinbaseClient.CreateAccount(acctId)
+	log.Infof("cointip: creating new account %s", acctName)
+	account, err := coinbaseClient.CreateAccount(acctName)
 	if err != nil {
 		return nil, err
 	}
 	accountsCache = append(accountsCache, account)
-	log.Infof("Created new cointip account: %s", acctId)
+	log.Infof("cointip: created new cointip account: %s (%s)", account.Name, account.ID)
 
+	if bankAccount == nil {
+		log.Infof("cointip: skipping account priming - bank account does not exist")
+		return account, nil
+	}
 	tx, err := coinbaseClient.Transfer(bankAccount.ID, account.ID, &cointip.Balance{Currency: cointip.CurrencyUSD, Amount: 3.00})
 	if err != nil {
-		log.WithError(err).Errorf("Failed to prime new cointip account from bank: %s", bankAccount.ID)
-		// non-fatal, so we still return the account
-	} else {
-		log.Infof("Primed new cointip account %s txid: %s", acctId, tx.ID)
+		log.WithError(err).Errorf("cointip: failed to prime new cointip account from bank: %s (%s)", bankAccount.Name, bankAccount.ID)
+		return account, nil
 	}
 
-	return account, nil
+	log.Infof("cointip: primed new cointip account - refreshing again %s (%s) txid: %s", account.Name, account.ID, tx.ID)
+	refreshed, err := coinbaseClient.GetAccount(account.ID)
+	if err != nil {
+		log.WithError(err).Errorf("cointip: failed refreshing new account after priming, returning non-refreshed account: %s", err)
+		return account, err
+	}
+	return refreshed, nil
 }
 
 func cointipReaction(ctx context.Context, reactionChannel <-chan *quadlek.ReactionHookMsg) {
@@ -105,40 +115,52 @@ func cointipReaction(ctx context.Context, reactionChannel <-chan *quadlek.Reacti
 				Currency: cointip.CurrencyUSD,
 			}
 			switch rh.Reaction.Reaction {
-			case ":cointip_1:":
+			case "cointip_1":
 				amount.Amount = .01
-			case ":cointip_2:":
+			case "cointip_2":
 				amount.Amount = .02
-			case ":cointip_5:":
+			case "cointip_5":
 				amount.Amount = .05
-			case ":cointip_10:":
+			case "cointip_10":
 				amount.Amount = .10
-			case ":cointip_25:":
+			case "cointip_25":
 				amount.Amount = .25
 			default:
-				return
+				continue
 			}
 
-			from, err := getOrCreateAccount(rh.Reaction.User, false)
-			if err != nil {
-				log.WithError(err).Error("Failed fetching coinbase account.")
-				return
+			if bankAccount == nil {
+				log.Info("cointip: ignoring tip reaction - plugin is not initialized")
+				continue
 			}
-			to, err := getOrCreateAccount(rh.Reaction.ItemUser, false)
+
+			log.Infof("cointip: got reaction %s from:%s to:%s", rh.Reaction.Reaction, rh.Reaction.User, rh.Reaction.ItemUser)
+			if rh.Reaction.User == rh.Reaction.ItemUser {
+				log.Infof("cointip: skipping tip - user is tipping themselves")
+				continue
+			}
+
+			from, err := getOrCreateAccount(rh.Reaction.User)
 			if err != nil {
-				log.WithError(err).Error("Failed fetching coinbase account.")
-				return
+				log.WithError(err).Error("cointip: tip failed - failed fetching coinbase account.")
+				continue
+			}
+			to, err := getOrCreateAccount(rh.Reaction.ItemUser)
+			if err != nil {
+				log.WithError(err).Error("cointip: tip failed - failed fetching coinbase account.")
+				continue
 			}
 
 			tx, err := coinbaseClient.Transfer(from.ID, to.ID, amount)
 			if err != nil {
-				log.WithError(err).Error("Failed creating transaction.")
-				return
+				log.WithError(err).Error("cointip: tip failed - ailed creating transaction.")
+				continue
 			}
 
-			log.Infof("%s tipped %s %s:%.2f txid: %s", from.ID, to.ID, tx.NativeAmount.Currency, tx.NativeAmount.Amount, tx.ID)
+			log.Infof("%s (%s) tipped %s (%s) %s:%.2f txid: %s", from.Name, from.ID, to.Name, to.ID, tx.NativeAmount.Currency, tx.NativeAmount.Amount, tx.ID)
 
 		case <-ctx.Done():
+			log.Info("cointip: stopping reaction hook")
 			return
 		}
 	}
@@ -155,38 +177,39 @@ func cointipCommand(ctx context.Context, cmdChannel <-chan *quadlek.CommandMsg) 
 				help(cmdMsg)
 				return
 			}
-
+			log.Infof("cointip: got command %s", cmd[0])
 			switch cmd[0] {
 			case "balance":
-				account, err := getOrCreateAccount(cmdMsg.Command.UserId, true)
+				account, err := getOrCreateAccount(cmdMsg.Command.UserId)
 				if err != nil {
 					log.WithError(err).Error("Failed fetching coinbase account.")
 					sayError(cmdMsg, err.Error(), false)
-					return
+					continue
 				}
 				say(cmdMsg, fmt.Sprintf("tipjar balance: %s", accountBalanceString(account)), false)
 			case "deposit":
-				account, err := getOrCreateAccount(cmdMsg.Command.UserId, false)
+				account, err := getOrCreateAccount(cmdMsg.Command.UserId)
 				if err != nil {
 					log.WithError(err).Error("Failed fetching coinbase account.")
 					sayError(cmdMsg, err.Error(), false)
-					return
+					continue
 				}
 				address, err := coinbaseClient.CreateAddress(account.ID)
 				if err != nil {
 					log.WithError(err).Error("Failed fetching coinbase address.")
 					sayError(cmdMsg, err.Error(), false)
-					return
+					continue
 				}
-				say(cmdMsg, fmt.Sprintf("deposit address: %s", address), false)
+				//TODO QR code or something for address, also allow coinbase <-> coinbase transfers to dodge fees
+				say(cmdMsg, fmt.Sprintf("deposit address: %s", address.Address), false)
 			case "withdraw":
 				say(cmdMsg, "withdraw is not implemented yet, sorry!", false)
 			default:
 				help(cmdMsg)
-				return
 			}
 
 		case <-ctx.Done():
+			log.Info("cointip: stopping plugin")
 			return
 		}
 	}
@@ -195,16 +218,20 @@ func cointipCommand(ctx context.Context, cmdChannel <-chan *quadlek.CommandMsg) 
 func Register(apiKey, apiSecret, bankAccountId string) quadlek.Plugin {
 	client, err := cointip.APIKeyClient(apiKey, apiSecret)
 	if err != nil {
+		log.WithError(err).Errorf("cointip: failed to create coinbase client, bailing: %s", err)
 		return nil
 	}
 	coinbaseClient = client
 
 	// Warm the cache and fetch the bank account
-	account, err := getOrCreateAccount(bankAccountId, true)
+	account, err := getOrCreateAccount(bankAccountId)
 	if err != nil {
+		log.WithError(err).Errorf("cointip: failed to set up bank account, bailing: %s", err)
 		return nil
 	}
 	bankAccount = account
+
+	log.Infof("cointip: starting plugin bank:%s (%s) %s total_accounts:%d", bankAccount.Name, bankAccount.ID, accountBalanceString(bankAccount), len(accountsCache))
 
 	return quadlek.MakePlugin(
 		"cointip",

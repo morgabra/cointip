@@ -54,7 +54,7 @@ func APIKeyClient(apiKey, apiSecret string) (*ApiKeyClient, error) {
 // https://developers.coinbase.com/docs/wallet/api-key-authentication
 func (c *ApiKeyClient) authenticate(req *http.Request, endpoint string, params []byte) {
 
-	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	timestamp := fmt.Sprintf("%d", time.Now().UTC().Unix())
 	message := timestamp + req.Method + req.URL.Path + string(params)
 
 	req.Header.Set("CB-ACCESS-KEY", c.apiKey)
