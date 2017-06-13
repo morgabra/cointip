@@ -6,7 +6,7 @@ import (
 
 	"github.com/urfave/cli"
 
-	"github.com/morgabra/cointip"
+	"github.com/Bullpeen/cointip"
 )
 
 var log *logger.Logger = logger.New(os.Stdout, "", 0)
@@ -25,6 +25,10 @@ func printTransaction(tx *cointip.Transaction) {
 		"%s %s %s:%.8f %s:%.2f\n",
 		tx.ID, tx.Status, tx.Amount.Currency, tx.Amount.Amount,
 		tx.NativeAmount.Currency, tx.NativeAmount.Amount)
+}
+
+func printPrice(price *cointip.Price) {
+	log.Printf("%.2f %s", price.Amount, price.Currency)
 }
 
 func makeClient(ctx *cli.Context) *cointip.ApiKeyClient {
@@ -75,6 +79,7 @@ func main() {
 		Transfer,
 		Withdraw,
 		GetTransaction,
+		GetPrice,
 	}
 
 	err := app.Run(os.Args)
@@ -314,6 +319,30 @@ var GetTransaction = cli.Command{
 		}
 
 		printTransaction(tx)
+
+		return nil
+	},
+}
+
+var GetPrice = cli.Command{
+	Name: "get-price",
+	Usage: "Get the current spot price for a currency pair",
+	Action: func(ctx *cli.Context) error {
+		c := makeClient(ctx)
+
+		if len(ctx.Args()) != 2 {
+			log.Fatal("Missing required argument(s): From, To")
+		}
+
+		from := ctx.Args()[0]
+		to := ctx.Args()[1]
+
+		price, err := c.Price(from ,to)
+		if err != nil {
+			log.Fatalf("Error: %s", err)
+		}
+
+		printPrice(price)
 
 		return nil
 	},

@@ -10,7 +10,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/jirwin/quadlek/quadlek"
-	"github.com/morgabra/cointip"
+	"github.com/Bullpeen/cointip"
 )
 
 var coinbaseClient *cointip.ApiKeyClient
@@ -45,6 +45,18 @@ func accountBalanceString(account *cointip.Account) string {
 		account.NativeBalance.Currency, account.NativeBalance.Amount,
 		account.Balance.Currency, account.Balance.Amount,
 	)
+}
+
+func sayPrice(cmdMsg *quadlek.CommandMsg, from string) error {
+	price, err := coinbaseClient.Price(from, cointip.CurrencyUSD)
+	if err != nil {
+		log.WithError(err).Error("Failed getting coinbase price")
+		sayError(cmdMsg, err.Error(), false)
+		return err
+	}
+
+	say(cmdMsg, fmt.Sprintf("%.2f %s", price.Amount, price.Currency), true)
+	return nil
 }
 
 func getOrCreateAccount(userId string) (*cointip.Account, error) {
@@ -215,6 +227,38 @@ func cointipCommand(ctx context.Context, cmdChannel <-chan *quadlek.CommandMsg) 
 	}
 }
 
+func btcCommand(ctx context.Context, cmdChannel <-chan *quadlek.CommandMsg) {
+	for {
+		select {
+		case cmdMsg := <-cmdChannel:
+			err := sayPrice(cmdMsg, cointip.CurrencyBTC)
+
+			if err != nil {
+				continue
+			}
+		case <-ctx.Done():
+			log.Info("cointip: stopping btc plugin")
+			return
+		}
+	}
+}
+
+func ethCommand(ctx context.Context, cmdChannel <-chan *quadlek.CommandMsg) {
+	for {
+		select {
+		case cmdMsg := <-cmdChannel:
+			err := sayPrice(cmdMsg, cointip.CurrencyETH)
+
+			if err != nil {
+				continue
+			}
+		case <-ctx.Done():
+			log.Info("cointip: stopping eth plugin")
+			return
+		}
+	}
+}
+
 func Register(apiKey, apiSecret, bankAccountId string) quadlek.Plugin {
 	client, err := cointip.APIKeyClient(apiKey, apiSecret)
 	if err != nil {
@@ -237,6 +281,8 @@ func Register(apiKey, apiSecret, bankAccountId string) quadlek.Plugin {
 		"cointip",
 		[]quadlek.Command{
 			quadlek.MakeCommand("cointip", cointipCommand),
+			quadlek.MakeCommand("btc", btcCommand),
+			quadlek.MakeCommand("eth", ethCommand),
 		},
 		nil,
 		[]quadlek.ReactionHook{

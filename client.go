@@ -17,6 +17,12 @@ import (
 const apiEndpoint = "https://api.coinbase.com/v2/"
 const apiVersion = "2017-05-17" // https://developers.coinbase.com/api/v2#versioning
 
+const (
+	CurrencyUSD = "USD"
+	CurrencyBTC = "BTC"
+	CurrencyETH = "ETH"
+)
+
 type ApiKeyClient struct {
 	endpoint  string
 	version   string
@@ -29,6 +35,11 @@ type ApiKeyClient struct {
 type Response struct {
 	Pagination json.RawMessage `json:"pagination"`
 	Data       json.RawMessage `json:"data"`
+}
+
+type Price struct {
+	Amount   float64 `json:"amount,string"`
+	Currency string  `json:"currency"`
 }
 
 // APIKeyClient makes a coinbase client using API key auth.
@@ -121,4 +132,24 @@ func (c *ApiKeyClient) Request(method string, path string, params interface{}) (
 	// TODO: Pagination
 
 	return resp.StatusCode, response.Data, nil
+}
+
+// Price gets the current spot price for a currency
+func (c *ApiKeyClient) Price(from string, to string) (*Price, error) {
+	code, body, err := c.Request("GET", fmt.Sprintf("prices/%s-%s/spot", from, to), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if code != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code %d", code)
+	}
+
+	price := &Price{}
+	err = json.Unmarshal(body, price)
+	if err != nil {
+		return nil, err
+	}
+
+	return price, nil
 }

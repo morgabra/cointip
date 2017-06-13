@@ -6,11 +6,6 @@ import (
 	"net/http"
 )
 
-const (
-	CurrencyUSD = "USD"
-	CurrencyBTC = "BTC"
-)
-
 type Balance struct {
 	Amount   float64 `json:"amount,string"`
 	Currency string  `json:"currency"`
